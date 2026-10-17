@@ -21,6 +21,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends python3 python3-pil python3-pip curl unzip ca-certificates git gh
           if command -v dkp-pacman >/dev/null 2>&1; then dkp-pacman -S --noconfirm --needed citro2d citro3d; else pacman -S --noconfirm --needed citro2d citro3d; fi
+          python3 -m pip install --break-system-packages qrcode
 
       - name: Install makerom and bannertool
         run: |
@@ -31,31 +32,13 @@ jobs:
           unzip -oj /tmp/bannertool.zip 'linux-x86_64/bannertool' -d /usr/local/bin
           chmod +x /usr/local/bin/bannertool
 
-      - name: Generate exact uploaded icon and HOME Menu audio
+      - name: Generate uploaded icon and safe flat banner
         working-directory: beatsaber3ds
         run: |
           python3 tools/gen_assets.py
           python3 tools/gen_icon.py
           test -s icon.png
-
-      - name: Build true 3D HOME Menu banner
-        working-directory: beatsaber3ds
-        run: |
-          python3 tools/gen_banner_gltf.py
-          git clone --depth 1 https://github.com/skyfloogle/pycgfx.git /tmp/pycgfx
-          python3 -m pip install --break-system-packages gltflib pillow qrcode
-          python3 - <<'PY'
-          p='/tmp/pycgfx/main.py'
-          s=open(p).read()
-          marker='import itertools\n'
-          compat='''import itertools\nif not hasattr(itertools, "batched"):\n    def _batched(iterable, n):\n        it = iter(iterable)\n        while True:\n            batch = tuple(__import__("itertools").islice(it, n))\n            if not batch:\n                return\n            yield batch\n    itertools.batched = _batched\n'''
-          if marker in s:
-              s=s.replace(marker,compat,1)
-          open(p,'w').write(s)
-          PY
-          python3 /tmp/pycgfx/main.py banner.gltf banner.cgfx
-          test -s banner.cgfx
-          test $(stat -c%s banner.cgfx) -lt 524288
+          test -s banner.png
 
       - name: Build native Old 3DS executable
         working-directory: beatsaber3ds
@@ -64,15 +47,19 @@ jobs:
           export DEVKITARM=/opt/devkitpro/devkitARM
           export CTRULIB=/opt/devkitpro/libctru
           sed -i 's/static void shutdown(/static void appShutdown(/; s/ shutdown();return/ appShutdown();return/' source/main.c
+          # Boot-first diagnostic: eliminate CSND as a possible launch hang.
+          sed -i 's/audioOK=R_SUCCEEDED(csndInit()); if(audioOK)buildUiSound();/audioOK=false;/' source/main.c
+          # Force one rendered menu frame before the event loop so we know main() was reached.
+          sed -i 's/while(aptMainLoop()){/render(); while(aptMainLoop()){/' source/main.c
           make -j2
           test -f gpt-saber-3ds.elf
           test -f gpt-saber-3ds.3dsx
 
-      - name: Package boot-safe FBI CIA with extended banner
+      - name: Package boot-first FBI CIA
         working-directory: beatsaber3ds
         run: |
-          bannertool makesmdh -s 'GPT Saber 3DS' -l 'One-saber native rhythm game for Old 3DS' -p '3DCreatorS + OpenAI' -f 'visible,allow3d,recordusage,extendedbanner' -i icon.png -o icon.icn
-          bannertool makebanner -ci banner.cgfx -a banner.wav -o banner.bnr
+          bannertool makesmdh -s 'GPT Saber 3DS' -l 'Old 3DS boot-first hardware test' -p '3DCreatorS + OpenAI' -f 'visible,recordusage' -i icon.png -o icon.icn
+          bannertool makebanner -i banner.png -a banner.wav -o banner.bnr
           makerom -f cia -o gpt-saber-3ds.cia -elf gpt-saber-3ds.elf -rsf app.rsf -icon icon.icn -banner banner.bnr -exefslogo -target t
           test -s gpt-saber-3ds.cia
           makerom -i gpt-saber-3ds.cia || true
@@ -81,7 +68,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import qrcode
-          url='https://github.com/AllPawsonDeck/3DSaber/releases/download/gpt-saber-3ds-v0.1.1-fix/gpt-saber-3ds.cia'
+          url='https://github.com/AllPawsonDeck/3DSaber/releases/download/gpt-saber-3ds-v0.1.2-bootfix/gpt-saber-3ds.cia'
           qrcode.make(url).save('gpt-saber-3ds-fbi-qr.png')
           PY
           test -s gpt-saber-3ds-fbi-qr.png
@@ -89,23 +76,22 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gpt-saber-3ds-old3ds-v011-fix
+          name: gpt-saber-3ds-old3ds-v012-bootfix
           path: |
             beatsaber3ds/gpt-saber-3ds.cia
             beatsaber3ds/gpt-saber-3ds.3dsx
             beatsaber3ds/icon.png
-            beatsaber3ds/banner.cgfx
             gpt-saber-3ds-fbi-qr.png
 
-      - name: Publish hardware-test prerelease
+      - name: Publish boot-fix prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: gpt-saber-3ds-v0.1.1-fix
+          TAG: gpt-saber-3ds-v0.1.2-bootfix
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          NOTES='Old 3DS hardware-test build by 3DCreatorS: boot-safe CIA permissions; exact uploaded icon artwork; true CGFX extended 3D HOME Menu banner; Old 3DS 268MHz/64MB settings; one saber; Easy/Normal/Expert only.'
+          NOTES='Old 3DS boot-first test by 3DCreatorS. Replaced the custom exheader with a broader proven homebrew-compatible syscall/process setup, removed the broken CGFX banner, and temporarily disabled CSND startup to isolate launch hangs. Uses the uploaded icon. If this reaches the game menu, the next build restores audio and then the corrected 3D HOME Menu model.'
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" beatsaber3ds/gpt-saber-3ds.cia beatsaber3ds/gpt-saber-3ds.3dsx beatsaber3ds/icon.png beatsaber3ds/banner.cgfx gpt-saber-3ds-fbi-qr.png --clobber
+            gh release upload "$TAG" beatsaber3ds/gpt-saber-3ds.cia beatsaber3ds/gpt-saber-3ds.3dsx beatsaber3ds/icon.png gpt-saber-3ds-fbi-qr.png --clobber
           else
-            gh release create "$TAG" beatsaber3ds/gpt-saber-3ds.cia beatsaber3ds/gpt-saber-3ds.3dsx beatsaber3ds/icon.png beatsaber3ds/banner.cgfx gpt-saber-3ds-fbi-qr.png --target "$GITHUB_SHA" --title 'GPT Saber 3DS v0.1.1 hardware fix' --prerelease --notes "$NOTES"
+            gh release create "$TAG" beatsaber3ds/gpt-saber-3ds.cia beatsaber3ds/gpt-saber-3ds.3dsx beatsaber3ds/icon.png gpt-saber-3ds-fbi-qr.png --target "$GITHUB_SHA" --title 'GPT Saber 3DS v0.1.2 boot fix' --prerelease --notes "$NOTES"
           fi
