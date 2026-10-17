@@ -4,7 +4,7 @@ on:
     branches: [ main ]
     paths:
       - 'beatsaber3ds/**'
-      - 'qr/**'
+      - 'README.md'
       - '.github/workflows/build.yml'
   workflow_dispatch:
 permissions:
@@ -43,7 +43,7 @@ jobs:
         run: |
           python3 tools/gen_banner_gltf.py
           git clone --depth 1 https://github.com/skyfloogle/pycgfx.git /tmp/pycgfx
-          python3 -m pip install --break-system-packages gltflib pillow
+          python3 -m pip install --break-system-packages gltflib pillow qrcode
           python3 - <<'PY'
           p='/tmp/pycgfx/main.py'
           s=open(p).read()
@@ -77,6 +77,15 @@ jobs:
           test -s gpt-saber-3ds.cia
           makerom -i gpt-saber-3ds.cia || true
 
+      - name: Generate FBI QR
+        run: |
+          python3 - <<'PY'
+          import qrcode
+          url='https://github.com/AllPawsonDeck/3DSaber/releases/download/gpt-saber-3ds-v0.1.1-fix/gpt-saber-3ds.cia'
+          qrcode.make(url).save('gpt-saber-3ds-fbi-qr.png')
+          PY
+          test -s gpt-saber-3ds-fbi-qr.png
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -86,7 +95,7 @@ jobs:
             beatsaber3ds/gpt-saber-3ds.3dsx
             beatsaber3ds/icon.png
             beatsaber3ds/banner.cgfx
-            qr/*.png
+            gpt-saber-3ds-fbi-qr.png
 
       - name: Publish hardware-test prerelease
         env:
@@ -96,7 +105,7 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           NOTES='Old 3DS hardware-test build by 3DCreatorS: boot-safe CIA permissions; exact uploaded icon artwork; true CGFX extended 3D HOME Menu banner; Old 3DS 268MHz/64MB settings; one saber; Easy/Normal/Expert only.'
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" beatsaber3ds/gpt-saber-3ds.cia beatsaber3ds/gpt-saber-3ds.3dsx beatsaber3ds/icon.png beatsaber3ds/banner.cgfx qr/*.png --clobber
+            gh release upload "$TAG" beatsaber3ds/gpt-saber-3ds.cia beatsaber3ds/gpt-saber-3ds.3dsx beatsaber3ds/icon.png beatsaber3ds/banner.cgfx gpt-saber-3ds-fbi-qr.png --clobber
           else
-            gh release create "$TAG" beatsaber3ds/gpt-saber-3ds.cia beatsaber3ds/gpt-saber-3ds.3dsx beatsaber3ds/icon.png beatsaber3ds/banner.cgfx qr/*.png --target "$GITHUB_SHA" --title 'GPT Saber 3DS v0.1.1 hardware fix' --prerelease --notes "$NOTES"
+            gh release create "$TAG" beatsaber3ds/gpt-saber-3ds.cia beatsaber3ds/gpt-saber-3ds.3dsx beatsaber3ds/icon.png beatsaber3ds/banner.cgfx gpt-saber-3ds-fbi-qr.png --target "$GITHUB_SHA" --title 'GPT Saber 3DS v0.1.1 hardware fix' --prerelease --notes "$NOTES"
           fi
