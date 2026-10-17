@@ -18,6 +18,10 @@ Built by **3DCreatorS**.
 
 ## FBI install
 
-Scan `qr/gpt-saber-3ds-fbi-qr.png` in FBI using **Remote Install → Scan QR Code**.
+On your 3DS, open **FBI → Remote Install → Scan QR Code**, then scan this:
 
-The QR points directly to the current CIA release in this repository.
+[![3DSaber FBI install QR](https://github.com/AllPawsonDeck/3DSaber/releases/download/gpt-saber-3ds-v0.1.1-fix/gpt-saber-3ds-fbi-qr.png)](https://github.com/AllPawsonDeck/3DSaber/releases/download/gpt-saber-3ds-v0.1.1-fix/gpt-saber-3ds.cia)
+
+**Current build:** `v0.1.1-fix`
+
+The QR installs the CIA directly from this repository's current release.
