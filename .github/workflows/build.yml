@@ -1,0 +1,100 @@
+name: Build 3DSaber
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'beatsaber3ds/**'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitarm:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3 python3-pil python3-pip curl unzip ca-certificates git gh
+          if command -v dkp-pacman >/dev/null 2>&1; then dkp-pacman -S --noconfirm --needed citro2d citro3d; else pacman -S --noconfirm --needed citro2d citro3d; fi
+
+      - name: Install makerom and bannertool
+        run: |
+          curl -sSL -o /tmp/makerom.zip https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.18.3/makerom-v0.18.3-ubuntu_x86_64.zip
+          unzip -oj /tmp/makerom.zip -d /tmp/makerom
+          install -m755 "$(find /tmp/makerom -type f -name makerom | head -n1)" /usr/local/bin/makerom
+          curl -sSL -o /tmp/bannertool.zip https://github.com/Epicpkmn11/bannertool/releases/download/v1.2.2/bannertool.zip
+          unzip -oj /tmp/bannertool.zip 'linux-x86_64/bannertool' -d /usr/local/bin
+          chmod +x /usr/local/bin/bannertool
+
+      - name: Generate exact uploaded icon and HOME Menu audio
+        working-directory: beatsaber3ds
+        run: |
+          python3 tools/gen_assets.py
+          python3 tools/gen_icon.py
+          test -s icon.png
+
+      - name: Build true 3D HOME Menu banner
+        working-directory: beatsaber3ds
+        run: |
+          python3 tools/gen_banner_gltf.py
+          git clone --depth 1 https://github.com/skyfloogle/pycgfx.git /tmp/pycgfx
+          python3 -m pip install --break-system-packages gltflib pillow
+          python3 - <<'PY'
+          p='/tmp/pycgfx/main.py'
+          s=open(p).read()
+          marker='import itertools\n'
+          compat='''import itertools\nif not hasattr(itertools, "batched"):\n    def _batched(iterable, n):\n        it = iter(iterable)\n        while True:\n            batch = tuple(__import__("itertools").islice(it, n))\n            if not batch:\n                return\n            yield batch\n    itertools.batched = _batched\n'''
+          if marker in s:
+              s=s.replace(marker,compat,1)
+          open(p,'w').write(s)
+          PY
+          python3 /tmp/pycgfx/main.py banner.gltf banner.cgfx
+          test -s banner.cgfx
+          test $(stat -c%s banner.cgfx) -lt 524288
+
+      - name: Build native Old 3DS executable
+        working-directory: beatsaber3ds
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export DEVKITARM=/opt/devkitpro/devkitARM
+          export CTRULIB=/opt/devkitpro/libctru
+          sed -i 's/static void shutdown(/static void appShutdown(/; s/ shutdown();return/ appShutdown();return/' source/main.c
+          make -j2
+          test -f gpt-saber-3ds.elf
+          test -f gpt-saber-3ds.3dsx
+
+      - name: Package boot-safe FBI CIA with extended banner
+        working-directory: beatsaber3ds
+        run: |
+          bannertool makesmdh -s 'GPT Saber 3DS' -l 'One-saber native rhythm game for Old 3DS' -p '3DCreatorS + OpenAI' -f 'visible,allow3d,recordusage,extendedbanner' -i icon.png -o icon.icn
+          bannertool makebanner -ci banner.cgfx -a banner.wav -o banner.bnr
+          makerom -f cia -o gpt-saber-3ds.cia -elf gpt-saber-3ds.elf -rsf app.rsf -icon icon.icn -banner banner.bnr -exefslogo -target t
+          test -s gpt-saber-3ds.cia
+          makerom -i gpt-saber-3ds.cia || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpt-saber-3ds-old3ds-v011-fix
+          path: |
+            beatsaber3ds/gpt-saber-3ds.cia
+            beatsaber3ds/gpt-saber-3ds.3dsx
+            beatsaber3ds/icon.png
+            beatsaber3ds/banner.cgfx
+
+      - name: Publish hardware-test prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: gpt-saber-3ds-v0.1.1-fix
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          NOTES='Old 3DS hardware-test build by 3DCreatorS: boot-safe CIA permissions; exact uploaded icon artwork; true CGFX extended 3D HOME Menu banner; Old 3DS 268MHz/64MB settings; one saber; Easy/Normal/Expert only.'
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" beatsaber3ds/gpt-saber-3ds.cia beatsaber3ds/gpt-saber-3ds.3dsx beatsaber3ds/icon.png beatsaber3ds/banner.cgfx --clobber
+          else
+            gh release create "$TAG" beatsaber3ds/gpt-saber-3ds.cia beatsaber3ds/gpt-saber-3ds.3dsx beatsaber3ds/icon.png beatsaber3ds/banner.cgfx --target "$GITHUB_SHA" --title 'GPT Saber 3DS v0.1.1 hardware fix' --prerelease --notes "$NOTES"
+          fi
